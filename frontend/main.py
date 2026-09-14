@@ -732,27 +732,140 @@ def main(page: ft.Page):
         page.update()
         notify("Sample CSV template loaded into editor.")
 
-    file_path_field = ft.TextField(
-        label="CSV File Path",
-        value="sample_products.csv",
-        hint_text="e.g. sample_products.csv or /path/to/products.csv",
-        dense=True,
-        expand=True,
-        border_radius=8,
-    )
+    file_picker = ft.FilePicker()
 
-    def load_from_filepath(e):
-        target_path = (file_path_field.value or "").strip()
-        if not target_path:
-            notify("Please specify a valid file path.", is_error=True)
-            return
+    async def pick_native_file(e):
         try:
-            with open(target_path, "r", encoding="utf-8-sig") as f:
-                import_text_field.value = f.read()
-            notify(f"Successfully loaded '{target_path}'.")
-            page.update()
+            files = await file_picker.pick_files(
+                dialog_title="Choose CSV File",
+                allowed_extensions=["csv"],
+                with_data=True,
+            )
+            if files and len(files) > 0:
+                picked = files[0]
+                content = ""
+                if picked.bytes:
+                    content = picked.bytes.decode("utf-8-sig", errors="replace")
+                elif picked.path:
+                    with open(picked.path, "r", encoding="utf-8-sig") as fh:
+                        content = fh.read()
+                if content:
+                    import_text_field.value = content
+                    notify(f"Loaded file '{picked.name}' into editor.")
+                    page.update()
         except Exception as err:
-            notify(f"Could not load file: {str(err)}", is_error=True)
+            notify(f"File picker error: {str(err)}", is_error=True)
+
+    current_browser_path = Path(".").resolve()
+
+    def open_folder_browser(e):
+        nonlocal current_browser_path
+
+        items_col = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO, expand=True)
+        path_label = ft.Text(str(current_browser_path), size=12, color=ft.Colors.GREY_400, weight=ft.FontWeight.W_500)
+
+        def refresh_folder_view():
+            items_col.controls.clear()
+            path_label.value = str(current_browser_path)
+
+            if current_browser_path.parent != current_browser_path:
+                def go_up(ev):
+                    nonlocal current_browser_path
+                    current_browser_path = current_browser_path.parent
+                    refresh_folder_view()
+                    page.update()
+
+                items_col.controls.append(
+                    ft.ListTile(
+                        leading=ft.Icon(ft.Icons.ARROW_UPWARD, color=ft.Colors.AMBER_400),
+                        title=ft.Text(".. (Up One Level)", weight=ft.FontWeight.BOLD),
+                        dense=True,
+                        on_click=go_up,
+                    )
+                )
+
+            try:
+                entries = sorted(list(current_browser_path.iterdir()), key=lambda x: (not x.is_dir(), x.name.lower()))
+            except Exception as read_err:
+                items_col.controls.append(ft.Text(f"Cannot open directory: {str(read_err)}", color=ft.Colors.RED_400))
+                page.update()
+                return
+
+            found_any = False
+            for entry in entries:
+                if entry.name.startswith(".") and entry.name != "..":
+                    continue
+
+                if entry.is_dir():
+                    found_any = True
+                    def enter_dir(ev, sub_dir=entry):
+                        nonlocal current_browser_path
+                        current_browser_path = sub_dir
+                        refresh_folder_view()
+                        page.update()
+
+                    items_col.controls.append(
+                        ft.ListTile(
+                            leading=ft.Icon(ft.Icons.FOLDER, color=ft.Colors.BLUE_400),
+                            title=ft.Text(entry.name),
+                            dense=True,
+                            on_click=enter_dir,
+                        )
+                    )
+                elif entry.is_file() and entry.name.lower().endswith(".csv"):
+                    found_any = True
+                    def select_csv(ev, csv_file=entry):
+                        try:
+                            with open(csv_file, "r", encoding="utf-8-sig") as f:
+                                import_text_field.value = f.read()
+                            page.pop_dialog()
+                            notify(f"Loaded '{csv_file.name}' into editor.")
+                            page.update()
+                        except Exception as read_ex:
+                            notify(f"Failed to read file: {str(read_ex)}", is_error=True)
+
+                    size_kb = entry.stat().st_size / 1024.0
+                    items_col.controls.append(
+                        ft.ListTile(
+                            leading=ft.Icon(ft.Icons.DESCRIPTION, color=ft.Colors.GREEN_400),
+                            title=ft.Text(entry.name, weight=ft.FontWeight.W_600),
+                            subtitle=ft.Text(f"{size_kb:.1f} KB", size=11, color=ft.Colors.GREY_500),
+                            dense=True,
+                            on_click=select_csv,
+                        )
+                    )
+
+            if not found_any:
+                items_col.controls.append(
+                    ft.Container(
+                        content=ft.Text("No subfolders or .csv files found in this directory.", size=13, color=ft.Colors.GREY_500),
+                        padding=12,
+                    )
+                )
+
+        refresh_folder_view()
+
+        folder_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([ft.Icon(ft.Icons.FOLDER_OPEN, color=ft.Colors.BLUE_400), ft.Text("Browse Folders & CSV Files")]),
+            content=ft.Container(
+                width=550,
+                height=380,
+                content=ft.Column(
+                    [
+                        path_label,
+                        ft.Divider(height=8),
+                        items_col,
+                    ],
+                    expand=True,
+                    spacing=6,
+                ),
+            ),
+            actions=[
+                ft.TextButton("Close", on_click=lambda ev: page.pop_dialog()),
+            ],
+        )
+        page.show_dialog(folder_dialog)
 
     store_search_field.on_submit = lambda e: render_store()
     store_category_dropdown.on_change = lambda e: render_store()
@@ -880,11 +993,16 @@ def main(page: ft.Page):
                 ft.Divider(height=12),
                 ft.Row(
                     [
-                        file_path_field,
                         ft.FilledButton(
-                            content="Load File",
+                            content="Browse Files (Explorer)",
+                            icon=ft.Icons.FILE_OPEN,
+                            on_click=pick_native_file,
+                        ),
+                        ft.FilledButton(
+                            content="Browse Folders",
                             icon=ft.Icons.FOLDER_OPEN,
-                            on_click=load_from_filepath,
+                            bgcolor=ft.Colors.BLUE_700,
+                            on_click=open_folder_browser,
                         ),
                         ft.OutlinedButton(
                             content="Load Sample Template",
@@ -896,6 +1014,11 @@ def main(page: ft.Page):
                             icon=ft.Icons.PLAY_ARROW,
                             bgcolor=ft.Colors.GREEN_700,
                             on_click=handle_csv_import,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CLEAR_ALL,
+                            tooltip="Clear Editor",
+                            on_click=lambda e: (setattr(import_text_field, "value", ""), page.update()),
                         ),
                     ],
                     spacing=12,
