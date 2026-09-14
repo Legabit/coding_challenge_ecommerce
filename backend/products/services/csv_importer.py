@@ -1,21 +1,22 @@
 from decimal import Decimal, InvalidOperation
 import csv
 import io
+import re
 from django.db import transaction
 from products.models import Category, Product
 
 
 class CSVImporter:
-    REQUIRED_COLUMNS = {"name", "sku", "price"}
+    REQUIRED_COLUMNS = {"sku"}
 
     @classmethod
     def import_from_stream(cls, file_stream, encoding="utf-8-sig"):
         if isinstance(file_stream, bytes):
-            decoded_file = file_stream.decode(encoding)
+            decoded_file = file_stream.decode(encoding, errors="replace")
         elif hasattr(file_stream, "read"):
             content = file_stream.read()
             if isinstance(content, bytes):
-                decoded_file = content.decode(encoding)
+                decoded_file = content.decode(encoding, errors="replace")
             else:
                 decoded_file = str(content)
         else:
@@ -28,6 +29,7 @@ class CSVImporter:
                 "total": 0,
                 "created": 0,
                 "updated": 0,
+                "failed": 0,
                 "errors": [{"row": 0, "error": "CSV file has no headers or is empty"}],
             }
 
@@ -39,7 +41,8 @@ class CSVImporter:
                 "total": 0,
                 "created": 0,
                 "updated": 0,
-                "errors": [{"row": 0, "error": f"Missing required columns: {', '.join(missing)}"}],
+                "failed": 0,
+                "errors": [{"row": 0, "error": f"Missing required column: {', '.join(missing)}"}],
             }
 
         results = {
@@ -48,14 +51,20 @@ class CSVImporter:
             "created": 0,
             "updated": 0,
             "failed": 0,
+            "skipped_empty": 0,
             "errors": [],
         }
 
         category_cache = {}
 
         for row_index, row in enumerate(reader, start=2):
-            results["total"] += 1
             row_data = {k.strip().lower(): v.strip() if v else "" for k, v in row.items() if k}
+
+            if not any(row_data.values()):
+                results["skipped_empty"] += 1
+                continue
+
+            results["total"] += 1
 
             sku = row_data.get("sku", "").strip()
             name = row_data.get("name", "").strip()
@@ -71,45 +80,48 @@ class CSVImporter:
                 continue
 
             if not name:
-                results["failed"] += 1
-                results["errors"].append({"row": row_index, "sku": sku, "error": "Name cannot be empty"})
-                continue
+                name = description[:60].strip() if description else f"Product {sku}"
+
+            cleaned_price_str = raw_price.replace("$", "").replace("€", "").replace("£", "").replace(",", "").strip()
+            if cleaned_price_str.lower() in ("free", "zero", "$0", ""):
+                price = Decimal("0.00")
+            else:
+                try:
+                    price = Decimal(cleaned_price_str)
+                    if price < Decimal("0.00"):
+                        price = Decimal("0.00")
+                except (InvalidOperation, ValueError):
+                    results["failed"] += 1
+                    results["errors"].append({"row": row_index, "sku": sku, "error": f"Invalid price value: '{raw_price}'"})
+                    continue
 
             try:
-                price = Decimal(raw_price)
-                if price < 0:
-                    raise ValueError("Price must be positive")
-            except (InvalidOperation, ValueError):
-                results["failed"] += 1
-                results["errors"].append({"row": row_index, "sku": sku, "error": f"Invalid price value: '{raw_price}'"})
-                continue
-
-            try:
-                stock = int(raw_stock) if raw_stock else 0
-                if stock < 0:
-                    raise ValueError("Stock must be >= 0")
-            except ValueError:
+                stock = max(0, int(float(raw_stock))) if raw_stock else 0
+            except (ValueError, TypeError):
                 results["failed"] += 1
                 results["errors"].append({"row": row_index, "sku": sku, "error": f"Invalid stock value: '{raw_stock}'"})
                 continue
 
-            try:
-                weight_kg = Decimal(raw_weight) if raw_weight else Decimal("0.000")
-                if weight_kg < 0:
-                    raise ValueError("Weight must be >= 0")
-            except (InvalidOperation, ValueError):
-                results["failed"] += 1
-                results["errors"].append({"row": row_index, "sku": sku, "error": f"Invalid weight value: '{raw_weight}'"})
-                continue
+            cleaned_weight_str = raw_weight.replace("kg", "").replace("g", "").replace(",", "").strip()
+            if not cleaned_weight_str:
+                weight_kg = Decimal("0.000")
+            else:
+                try:
+                    weight_kg = max(Decimal("0.000"), Decimal(cleaned_weight_str))
+                except (InvalidOperation, ValueError):
+                    results["failed"] += 1
+                    results["errors"].append({"row": row_index, "sku": sku, "error": f"Invalid weight value: '{raw_weight}'"})
+                    continue
 
-            category = None
-            if category_name:
-                cat_key = category_name.lower()
-                if cat_key in category_cache:
-                    category = category_cache[cat_key]
-                else:
-                    category, _ = Category.objects.get_or_create(name=category_name)
-                    category_cache[cat_key] = category
+            if not category_name:
+                category_name = "General"
+
+            cat_key = category_name.lower()
+            if cat_key in category_cache:
+                category = category_cache[cat_key]
+            else:
+                category, _ = Category.objects.get_or_create(name=category_name)
+                category_cache[cat_key] = category
 
             with transaction.atomic():
                 product, created = Product.objects.update_or_create(

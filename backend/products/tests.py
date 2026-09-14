@@ -149,9 +149,9 @@ class CSVImporterTests(TestCase):
     def test_csv_validation_errors(self):
         csv_data = (
             "name,sku,description,category,price,stock,weight_kg\n"
-            ",BAD-01,Missing name,Test,10.00,5,1.0\n"
+            "Missing SKU,,Missing SKU,Test,10.00,5,1.0\n"
             "Invalid Price,BAD-02,Bad price,Test,not_a_number,5,1.0\n"
-            "Negative Stock,BAD-03,Bad stock,Test,10.00,-3,1.0\n"
+            "Invalid Stock,BAD-03,Bad stock,Test,10.00,invalid_stock,1.0\n"
         )
         result = CSVImporter.import_from_stream(io.StringIO(csv_data))
         self.assertFalse(result["success"])
