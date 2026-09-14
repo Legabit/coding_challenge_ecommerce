@@ -6,7 +6,7 @@ A modern, enterprise-grade e-commerce application featuring a decoupled **Django
 
 ## Example CSV Download Acknowledgment
 - **Example CSV File**: `Code Challenge E-Commerce` (`sample_products.csv`)
-- **Date Downloaded / Referenced**: **September 14, 2026**
+- **Date Downloaded / Referenced**: **September 7, 2026**
 
 ---
 
@@ -101,7 +101,7 @@ coding-challenge/
 ## How to Run Locally
 
 ### Prerequisites
-- Python 3.11 or 3.12 installed
+- Python 3.12 installed
 - Virtualenv (`python3 -m venv`)
 
 ### 1. Setup Virtual Environment
