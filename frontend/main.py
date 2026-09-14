@@ -732,21 +732,27 @@ def main(page: ft.Page):
         page.update()
         notify("Sample CSV template loaded into editor.")
 
-    file_picker = ft.FilePicker()
-    page.overlay.append(file_picker)
+    file_path_field = ft.TextField(
+        label="CSV File Path",
+        value="sample_products.csv",
+        hint_text="e.g. sample_products.csv or /path/to/products.csv",
+        dense=True,
+        expand=True,
+        border_radius=8,
+    )
 
-    def on_file_picked(e):
-        if e.files and len(e.files) > 0:
-            picked = e.files[0]
-            try:
-                with open(picked.path, "r", encoding="utf-8-sig") as f:
-                    import_text_field.value = f.read()
-                notify(f"Loaded file '{picked.name}' into editor.")
-                page.update()
-            except Exception as err:
-                notify(f"Could not read local file: {str(err)}", is_error=True)
-
-    file_picker.on_result = on_file_picked
+    def load_from_filepath(e):
+        target_path = (file_path_field.value or "").strip()
+        if not target_path:
+            notify("Please specify a valid file path.", is_error=True)
+            return
+        try:
+            with open(target_path, "r", encoding="utf-8-sig") as f:
+                import_text_field.value = f.read()
+            notify(f"Successfully loaded '{target_path}'.")
+            page.update()
+        except Exception as err:
+            notify(f"Could not load file: {str(err)}", is_error=True)
 
     store_search_field.on_submit = lambda e: render_store()
     store_category_dropdown.on_change = lambda e: render_store()
@@ -874,13 +880,14 @@ def main(page: ft.Page):
                 ft.Divider(height=12),
                 ft.Row(
                     [
+                        file_path_field,
                         ft.FilledButton(
-                            content="Choose CSV File",
-                            icon=ft.Icons.UPLOAD_FILE,
-                            on_click=lambda e: file_picker.pick_files(allowed_extensions=["csv"]),
+                            content="Load File",
+                            icon=ft.Icons.FOLDER_OPEN,
+                            on_click=load_from_filepath,
                         ),
                         ft.OutlinedButton(
-                            content="Load Sample CSV Template",
+                            content="Load Sample Template",
                             icon=ft.Icons.DESCRIPTION,
                             on_click=load_example_csv,
                         ),
@@ -892,6 +899,7 @@ def main(page: ft.Page):
                         ),
                     ],
                     spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Container(height=8),
                 import_text_field,
