@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecommerce-app
+    ports:
+      - "8000:8000"
+      - "8502:8502"
+    environment:
+      - DJANGO_DEBUG=True
+      - API_BASE_URL=http://127.0.0.1:8000/api
+      - PORT=8502
+    volumes:
+      - app_data:/app/backend/data
+
+volumes:
+  app_data:
